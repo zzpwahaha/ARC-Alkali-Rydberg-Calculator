@@ -866,7 +866,7 @@ class StarkMap:
                 comp = []
                 for i in xrange(len(ev)):
                     sh.append(abs(egvector[indexOfCoupledState, i])**2)
-                    comp.append(self._stateComposition2(egvector[:, i]))
+                    comp.append(self._stateComposition2(egvector[:, i], upTo = 5,totalContribCut=0.99))
                 self.highlight.append(sh)
                 self.composition.append(comp)
             else:
@@ -877,7 +877,7 @@ class StarkMap:
                     for j in xrange(dimension):
                         sumCoupledStates += abs(coupling[j] / self.maxCoupling) *\
                             abs(egvector[j, i]**2)
-                    comp.append(self._stateComposition2(egvector[:, i]))
+                    comp.append(self._stateComposition2(egvector[:, i], upTo = 5,totalContribCut=0.99))
                     sh.append(sumCoupledStates)
                 self.highlight.append(sh)
                 self.composition.append(comp)
@@ -1181,11 +1181,12 @@ class StarkMap:
 
             event.canvas.draw()
 
-    def _stateComposition(self, stateVector):
+    def _stateComposition(self, stateVector, totalContribCut = 0.95):
+        # stateVector: first is the state amplitude and second is the state index in self.basisStates
         i = 0
         totalContribution = 0
         value = "$"
-        while (i < len(stateVector)) and (totalContribution < 0.95):
+        while (i < len(stateVector)) and (totalContribution < totalContribCut):
             if (i != 0 and stateVector[i][0] > 0):
                 value += "+"
             value = value + ("%.2f" % stateVector[i][0]) +\
@@ -1197,13 +1198,13 @@ class StarkMap:
             value += "+\\ldots"
         return value + "$"
 
-    def _stateComposition2(self, stateVector, upTo=4):
+    def _stateComposition2(self, stateVector, upTo=4, totalContribCut = 0.95):
         contribution = np.absolute(stateVector)
         order = np.argsort(contribution, kind='heapsort')
         index = -1
         totalContribution = 0
         mainStates = []  # [state Value, state index]
-        while (index > -upTo) and (totalContribution < 0.95):
+        while (index > -upTo) and (totalContribution < totalContribCut):
             i = order[index]
             mainStates.append([stateVector[i], i])
             totalContribution += contribution[i]**2
@@ -1219,6 +1220,38 @@ class StarkMap:
             # we have singlets or triplets states of divalent atoms
             return "|%s m_j=%d\\rangle" %\
                 (printStateStringLatex(n1, l1, j1, s=self.s), int(mj1))
+
+    @staticmethod
+    def _isCoupled(n, l, j, n1, l1, j1):
+        if (not(n == n1 and l == l1 and j == j1) 
+            and not(abs(l1 - l) != 1
+                        and( (abs(j - 0.5) < 0.1
+                            and abs(j1 - 0.5) < 0.1) # j = 1/2 and j'=1/2 forbidden
+                            or
+                            (abs(j) < 0.1
+                            and abs(j1 - 1) < 0.1)  # j = 0 and j'=1 forbidden
+                            or
+                            (abs(j-1) < 0.1
+                            and abs(j1) < 0.1)  # j = 1 and j'=0 forbidden
+                        )
+                    )
+                and not(abs(j)<0.1 and abs(j1)<0.1)  # j = 0 and j'=0 forbiden
+                and not(abs(l)<0.1 and abs(l1)<0.1) # l = 0 and l' = 0 is forbiden
+            ):
+            # determine coupling
+            dl = abs(l - l1)
+            dj = abs(j - j1)
+            c1 = 0
+            if dl == 1 and (dj < 1.1):
+                c1 = 1  # dipole coupling
+            elif (dl == 0 or dl == 2 or dl == 1)and (dj < 2.1):
+                c1 = 2  # quadrupole coupling
+            else:
+                return False
+            return c1
+        else:
+            return False
+
 
     def getPolarizability(self, maxField=1.e10, showPlot=False,
                           debugOutput=False, minStateContribution=0.0):

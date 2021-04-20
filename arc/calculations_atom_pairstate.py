@@ -1770,13 +1770,13 @@ class PairStateInteractions:
         else:
             raise ValueError("Unsupported export format (.%s)." % format)
 
-    def _stateComposition(self, stateVector):
+    def _stateComposition(self, stateVector, maxStatesCut = 5, totalContribCut = 0.95 ):
         contribution = np.absolute(stateVector)
         order = np.argsort(contribution, kind='heapsort')
         index = -1
         totalContribution = 0
         value = "$"
-        while (index > -5) and (totalContribution < 0.95):
+        while (index > -maxStatesCut) and (totalContribution < totalContribCut):
             i = order[index]
             if (index != -1 and
                 (stateVector[i].real > 0 or abs(stateVector[i].imag) > 1e-9)):
@@ -2636,6 +2636,7 @@ class StarkMapResonances:
         self.r = []
         self.y = []
         self.composition = []
+        self.coupling = []
 
         for dm1 in dmlist1:
             sm1.defineBasis(n1, l1, j1, mj1 + dm1, nMin, nMax, maxL,
@@ -2654,6 +2655,7 @@ class StarkMapResonances:
                 for i in xrange(len(sm1.eFieldList)):
                     yList = []
                     compositionList = []
+                    coulingList = []
                     if progressOutput:
                         sys.stdout.write("\rE=%.2f V/m " % sm1.eFieldList[i])
                         sys.stdout.flush()
@@ -2670,17 +2672,21 @@ class StarkMapResonances:
                                 yList.append(energy)
                                 compositionList.append([
                                     sm1._stateComposition(
-                                        sm1.composition[i][j]),
+                                        sm1.composition[i][j], totalContribCut = 0.9999),
                                     sm2._stateComposition(
-                                        sm2.composition[i][jj])
+                                        sm2.composition[i][jj], 0.9999)
                                     ])
-
+                                # calculate coupling to target pair state
+                                coulingList.append(self._calculateCoupling(sm1.composition[i][j],sm2.composition[i][jj],sm1,sm2))
+                                
                     if (len(self.y) <= i):
                         self.y.append(yList)
                         self.composition.append(compositionList)
+                        self.coupling.append(coulingList)
                     else:
                         self.y[i].extend(yList)
                         self.composition[i].extend(compositionList)
+                        self.coupling[i].extend(coulingList)
 
                 if progressOutput:
                     print("\n")
@@ -2688,6 +2694,7 @@ class StarkMapResonances:
         for i in xrange(len(sm1.eFieldList)):
             self.y[i] = np.array(self.y[i])
             self.composition[i] = np.array(self.composition[i])
+            self.coupling[i] = np.array(self.coupling[i])
             self.ax.scatter([sm1.eFieldList[i] / 100.] * len(self.y[i]),
                             self.y[i], c="k",
                             s=5, norm=cNorm, cmap=cm, lw=0, picker=5)
@@ -2726,6 +2733,28 @@ class StarkMapResonances:
             plt.show()
         else:
             print("Error while showing a plot: nothing is plotted yet")
+
+    def _calculateCoupling(self, stateVector1, stateVector2, starkmap1, starkmap2):
+        # stateVector: first is the state amplitude and second is the state index in self.basisStates
+        i = 0
+        dipoleME1 = 0
+        while (i < len(stateVector1)):
+            statec = starkmap1.basisStates[stateVector1[i][1]];
+            if ((starkmap1._isCoupled(*self.state1[:3],*statec[:3]) == 1) and abs(self.state1[3]-statec[3])<1.1):
+                dipoleME1 += stateVector1[i][0]*\
+                    self.atom1.getDipoleMatrixElement(*self.state1[:4],*statec,statec[3] - self.state1[3])
+            i += 1
+
+        i = 0
+        dipoleME2 = 0
+        while (i < len(stateVector2)):
+            statec = starkmap2.basisStates[stateVector2[i][1]];
+            if ((starkmap2._isCoupled(*self.state2[:3],*statec[:3]) == 1) and abs(self.state2[3]-statec[3])<1.1):
+                dipoleME2 += stateVector2[i][0]*\
+                    self.atom2.getDipoleMatrixElement(*self.state2[:4],*statec,statec[3] - self.state2[3])
+            i += 1
+        return dipoleME1*dipoleME2
+
 
     def _onPick(self, event):
         if isinstance(event.artist, matplotlib.collections.PathCollection):
