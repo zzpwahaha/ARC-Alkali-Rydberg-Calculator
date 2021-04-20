@@ -41,6 +41,13 @@ import sys
 if sys.version_info > (2,):
     xrange = range
 
+import multiprocessing
+import ctypes
+import time
+from . import beta # for multiprocess set shared memory in pool on Windows,
+# #see https://stackoverflow.com/questions/1675766/combine-pool-map-with-shared-memory-array-in-python-multiprocessing
+beta.data = []
+
 
 sqlite3.register_adapter(np.float64, float)
 sqlite3.register_adapter(np.float32, float)
@@ -760,7 +767,7 @@ class StarkMap:
         return 0
 
     def diagonalise(self, eFieldList, drivingFromState=[0, 0, 0, 0, 0],
-                    progressOutput=False, debugOutput=False):
+                    progressOutput=False, debugOutput=False, cores = 4, parallel = True):
         """
             Finds atom eigenstates in a given electric field
 
@@ -777,6 +784,8 @@ class StarkMap:
                     progress of calculation; Set to false by default.
                 debugOutput (:obj:`bool`, optional): if True prints additional
                     information usefull for debuging. Set to false by default.
+                cores (:obj:'int', optional): number of cores for multiprocessor
+                    computation
         """
 
         # if we are driving from some state
@@ -846,44 +855,68 @@ class StarkMap:
         self.highlight = []
         self.composition = []
 
-        if progressOutput:
-            print("Finding eigenvectors...")
-        progress = 0.
-        for eField in eFieldList:
+        if parallel:
             if progressOutput:
-                progress += 1.
-                sys.stdout.write("\r%d%%" %
-                                 (float(progress) / float(len(eFieldList)) * 100))
-                sys.stdout.flush()
+                print("Finding eigenvectors...")
+            start = time.time()
+            # add multiprocess computation
+            mp_mat1 = multiprocessing.Array(ctypes.c_double, dimension * dimension)
+            mp_mat2 = multiprocessing.Array(ctypes.c_double, dimension * dimension)
+            mp_coupling = multiprocessing.Array(ctypes.c_double, len(coupling))
+            # learned from https://stackoverflow.com/questions/1675766/combine-pool-map-with-shared-memory-array-in-python-multiprocessing
+            mp_mat1 = np.vstack(self.mat1)
+            mp_mat2 = np.vstack(self.mat2)
+            mp_coupling = np.array(coupling)
+            pool = multiprocessing.Pool(processes=cores, initializer=initProcess, initargs=([mp_mat1,mp_mat2,mp_coupling],)) # fork
+            print("start to multiprocess at {0}".format(time.time() - start))
+            inputs = [[efield,dimension,drivingFromState,indexOfCoupledState,self.maxCoupling] for efield in eFieldList]
+            outputs = pool.starmap(multiprocDiagonalize, inputs)
 
-            m = self.mat1 + self.mat2 * eField
+            if progressOutput:
+                print("Finished finding eigenvectors...")
+            print(time.time() - start)
+            self.y = [output[0] for output in outputs]
+            self.highlight = [output[1] for output in outputs]
+            self.composition = [output[2] for output in outputs]
+        else:
+            start = time.time()
+            progress = 0.
+            for eField in eFieldList:
+                if progressOutput:
+                    progress += 1.
+                    sys.stdout.write("\r%d%%" %
+                                     (float(progress) / float(len(eFieldList)) * 100))
+                    sys.stdout.flush()
 
-            ev, egvector = eigh(m)
+                m = self.mat1 + self.mat2 * eField
 
-            self.y.append(ev)
-            if (drivingFromState[0] < 0.1):
-                sh = []
-                comp = []
-                for i in xrange(len(ev)):
-                    sh.append(abs(egvector[indexOfCoupledState, i])**2)
-                    comp.append(self._stateComposition2(egvector[:, i], upTo = 5,totalContribCut=0.99))
-                self.highlight.append(sh)
-                self.composition.append(comp)
-            else:
-                sh = []
-                comp = []
-                for i in xrange(len(ev)):
-                    sumCoupledStates = 0.
-                    for j in xrange(dimension):
-                        sumCoupledStates += abs(coupling[j] / self.maxCoupling) *\
-                            abs(egvector[j, i]**2)
-                    comp.append(self._stateComposition2(egvector[:, i], upTo = 5,totalContribCut=0.99))
-                    sh.append(sumCoupledStates)
-                self.highlight.append(sh)
-                self.composition.append(comp)
+                ev, egvector = eigh(m)
 
-        if progressOutput:
-            print("\n")
+                self.y.append(ev)
+                if (drivingFromState[0] < 0.1):
+                    sh = []
+                    comp = []
+                    for i in xrange(len(ev)):
+                        sh.append(abs(egvector[indexOfCoupledState, i])**2)
+                        comp.append(self._stateComposition2(egvector[:, i], upTo = 5,totalContribCut=0.99))
+                    self.highlight.append(sh)
+                    self.composition.append(comp)
+                else:
+                    sh = []
+                    comp = []
+                    for i in xrange(len(ev)):
+                        sumCoupledStates = 0.
+                        for j in xrange(dimension):
+                            sumCoupledStates += abs(coupling[j] / self.maxCoupling) *\
+                                abs(egvector[j, i]**2)
+                        comp.append(self._stateComposition2(egvector[:, i], upTo = 5,totalContribCut=0.99))
+                        sh.append(sumCoupledStates)
+                    self.highlight.append(sh)
+                    self.composition.append(comp)
+
+            if progressOutput:
+                print("\n")
+            print(time.time() - start)
         return
 
     def exportData(self, fileBase, exportFormat="csv"):
@@ -1834,6 +1867,49 @@ class LevelPlot:
             self.ax.set_title(line)
             event.canvas.draw()
 
+# used for multiprocessing in StarkMap.diagonalize
+def __stateComposition2ForMultiProc(stateVector, upTo=4, totalContribCut = 0.95):
+    contribution = np.absolute(stateVector)
+    order = np.argsort(contribution, kind='heapsort')
+    index = -1
+    totalContribution = 0
+    mainStates = []  # [state Value, state index]
+    while (index > -upTo) and (totalContribution < totalContribCut):
+        i = order[index]
+        mainStates.append([stateVector[i], i])
+        totalContribution += contribution[i]**2
+        index -= 1
+    return mainStates
+
+def initProcess(share):
+  beta.data = share
+
+
+def multiprocDiagonalize(eField, dim, drivingFromState, indexOfCoupledState, maxCoupling):
+    m = beta.data[0].reshape(dim,dim) + beta.data[1].reshape(dim,dim) * eField
+    ev, egvector = eigh(m)
+    # self.y.append(ev)
+    if (drivingFromState[0] < 0.1):
+        sh = []
+        comp = []
+        for i in xrange(len(ev)):
+            sh.append(abs(egvector[indexOfCoupledState, i]) ** 2)
+            comp.append(__stateComposition2ForMultiProc(egvector[:, i], upTo=5, totalContribCut=0.99))
+        # self.highlight.append(sh)
+        # self.composition.append(comp)
+    else:
+        sh = []
+        comp = []
+        for i in xrange(len(ev)):
+            sumCoupledStates = 0.
+            for j in xrange(dim):
+                sumCoupledStates += abs(beta.data[2][j] / maxCoupling) * \
+                                    abs(egvector[j, i] ** 2)
+            comp.append(__stateComposition2ForMultiProc(egvector[:, i], upTo=5, totalContribCut=0.99))
+            sh.append(sumCoupledStates)
+        # self.highlight.append(sh)
+        # self.composition.append(comp)
+    return ev, sh, comp
 
 class AtomSurfaceVdW:
     r"""
@@ -2744,3 +2820,7 @@ class DynamicPolarizability:
                 ax.axvline(x=resonance * 1e9, linestyle=":", color="0.5",
                            zorder=0)
         return ax
+
+
+if __name__ == '__main__':
+    0
