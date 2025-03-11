@@ -2950,6 +2950,7 @@ class AlkaliAtom(object):
         lr,
         jr,
         mjr,
+        printb = False
     ):
         r"""
         Returns two-photon Rabi frequency :math:`\Omega_R`, ground AC Stark shift :math:`\Delta_{\mathrm{AC}_g}`, Rydberg state AC Stark shift :math:`\Delta_{\mathrm{AC}_r}` and probability to scatter a photon during a :math:`\pi`-pulse :math:`P_\mathrm{sc}` for two-photon  excitation from :math:`\vert f_h,m_{f_g}\rangle\rightarrow \vert j_r,m_{j_r}\rangle` via intermediate excited state
@@ -3027,6 +3028,9 @@ class AlkaliAtom(object):
         ACr = np.zeros(np.shape(Delta))
         Pe = np.zeros(np.shape(Delta))
 
+        if printb:
+            print(f"To {printStateString(ne,le,je)}: 420 coupling (2pi*MHz), 1013 coupling (2pi*MHz), Ehfs (2pi*MHz)")
+
         # Loop over excited state energylevels
         for fe in range(round(abs(je - self.I)), 1 + round(je + self.I)):
             # Hyperfine energy shift (rad s-1)
@@ -3050,7 +3054,8 @@ class AlkaliAtom(object):
                         je, fe, mfe, jr, mjr, qc
                     )
                 )
-
+                if printb:
+                    print(f"|F={fe},m_F={mfe:>2}> (MHz): {OmP/(2*np.pi*1e6):11.2e}, {OmC/(2*np.pi*1e6):18.2e}, {Ehfs/(2*np.pi*1e6):18.2e}")
                 # AC Stark shift on ground state (rad s-1)
                 ACg += (OmP**2) / (4 * (Delta - Ehfs))
                 # AC Stark shift on Rydberg state (rad s-1)
