@@ -3029,7 +3029,7 @@ class AlkaliAtom(object):
         Pe = np.zeros(np.shape(Delta))
 
         if printb:
-            print(f"To {printStateString(ne,le,je)}: 420 coupling (2pi*MHz), 1013 coupling (2pi*MHz), Ehfs (2pi*MHz)")
+            print(f"To {printStateStringLatex(ne,le,je)}: 420 coupling (2pi*MHz), 1013 coupling (2pi*MHz), Ehfs (2pi*MHz)")
 
         # Loop over excited state energylevels
         for fe in range(round(abs(je - self.I)), 1 + round(je + self.I)):
